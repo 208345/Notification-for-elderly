@@ -21,17 +21,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
-      - name: Android SDK を用意
-        uses: android-actions/setup-android@v3
-
-      - name: 必要なSDKを入れる
+      - name: Android SDK を確認
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" > /dev/null
-
-      - name: Gradle を用意
-        uses: gradle/actions/setup-gradle@v4
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "--- 入っているプラットフォーム ---"
+          ls "$ANDROID_HOME/platforms" || true
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: gradlew に実行権限をつける
         run: chmod +x ./gradlew
@@ -42,7 +41,7 @@ jobs:
       - name: APK をつくる
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: APK を成果物として保存
+      - name: APK を保存
         uses: actions/upload-artifact@v4
         with:
           name: mimamori-reminder-apk
@@ -50,11 +49,11 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: テスト結果を保存
+      - name: 失敗したときの手がかりを保存
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-reports
+          name: build-reports
           path: app/build/reports/
           if-no-files-found: ignore
           retention-days: 14
