@@ -1,0 +1,60 @@
+name: APKをつくる
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ソースを取得
+        uses: actions/checkout@v4
+
+      - name: Java 17 を用意
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK を用意
+        uses: android-actions/setup-android@v3
+
+      - name: 必要なSDKを入れる
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Gradle を用意
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: gradlew に実行権限をつける
+        run: chmod +x ./gradlew
+
+      - name: テストを実行
+        run: ./gradlew test --stacktrace
+
+      - name: APK をつくる
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: APK を成果物として保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimamori-reminder-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: テスト結果を保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/
+          if-no-files-found: ignore
+          retention-days: 14
