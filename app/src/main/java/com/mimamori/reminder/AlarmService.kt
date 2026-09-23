@@ -15,14 +15,19 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 
 /**
- * 時間になったときに動く短時間のサービス。
- *  1. アラーム音を1回鳴らす
- *  2. タスク内容を音声で読み上げる（2回）
- *  3. 画面全体の通知（フルスクリーンインテント）で AlarmActivity を開く
- *  4. 鳴り終わったら「まだ完了していません」通知だけ残して自分は止まる
+ * 時間になったときに動くサービス。
+ *
+ *  ・「完了」が押されるまで、アラーム音と読み上げをくり返します
+ *  ・押されなくても、設定した長さ（既定60秒）で自動的に止まります
+ *  ・画面いっぱいのお知らせ（AlarmActivity）を出します
+ *  ・止まったあとは「まだ完了していません」通知だけを残します
  */
 class AlarmService : Service() {
 
@@ -33,8 +38,9 @@ class AlarmService : Service() {
         const val ACTION_STOP = "com.mimamori.reminder.STOP_SOUND"
 
         private const val FGS_NOTIF_ID = 1001
-        /** 未完了として残す通知のID（タスクごとに変える） */
-        fun remindNotifId(taskId: Long): Int = 2000 + ((taskId % 1000L).toInt().let { if (it < 0) -it else it })
+
+        fun remindNotifId(taskId: Long): Int =
+            2000 + ((taskId % 1000L).toInt().let { if (it < 0) -it else it })
 
         @Volatile
         var ringingTaskId: Long = Long.MIN_VALUE
@@ -42,12 +48,19 @@ class AlarmService : Service() {
     }
 
     private var player: MediaPlayer? = null
+    private var vibrator: Vibrator? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
-    private var timeout: Runnable? = null
+
     private var currentTask: TaskItem? = null
     private var currentTitle = ""
     private var currentSpeech = ""
+
+    /** 鳴らすのをやめる時刻 */
+    private var deadline = 0L
+    /** 何回目の鳴動セットか。古いコールバックを無視するために使う */
+    private var generation = 0
+    private var stopped = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -57,30 +70,161 @@ class AlarmService : Service() {
             return START_NOT_STICKY
         }
 
-        // 前のアラームがまだ残っていた場合に備えて、いったん片づける
-        runCatching { player?.stop(); player?.release() }
-        player = null
-        spoken = false
+        // 前の鳴動が残っていたら片づける
+        generation++
+        stopped = false
+        stopSound()
 
-        val taskId = intent?.getLongExtra(EXTRA_TASK_ID, Long.MIN_VALUE) ?: Long.MIN_VALUE
         Repo.init(this)
+        val taskId = intent?.getLongExtra(EXTRA_TASK_ID, Long.MIN_VALUE) ?: Long.MIN_VALUE
         val task = Repo.byId(taskId)
         currentTask = task
         currentTitle = task?.title ?: intent?.getStringExtra(EXTRA_TITLE) ?: "お知らせ"
         currentSpeech = task?.speechText() ?: intent?.getStringExtra(EXTRA_SPEECH) ?: currentTitle
         ringingTaskId = taskId
 
-        startForegroundSafely(buildRingingNotification(taskId, currentTitle))
+        val notif = buildRingingNotification(taskId, currentTitle)
+        startForegroundSafely(notif)
         acquireWakeLock()
-        startSound()
 
-        // 最大でも設定秒数で必ず止める
-        val limit = (Repo.soundSeconds.coerceAtLeast(20)) * 1000L
-        timeout?.let { handler.removeCallbacks(it) }
-        timeout = Runnable { finishRinging(keepReminder = true) }
-        handler.postDelayed(timeout!!, limit)
+        // スマホを使用中でも確実に全画面で出すため、重ねて表示の権限があれば直接ひらく
+        openFullScreenIfPossible(taskId, currentTitle)
+
+        deadline = System.currentTimeMillis() + Repo.soundSeconds.coerceIn(10, 300) * 1000L
+        startVibration()
+        cycle(generation)
+
+        // 読み上げエンジンが応答しない等で止まらなくなるのを防ぐ最後の保険
+        handler.postDelayed({ finishRinging(true) }, (deadline - System.currentTimeMillis()) + 3000L)
 
         return START_NOT_STICKY
+    }
+
+    /* ---------------- 鳴動のくり返し ---------------- */
+
+    private fun cycle(gen: Int) {
+        if (stopped || gen != generation) return
+        if (System.currentTimeMillis() >= deadline) { finishRinging(true); return }
+
+        playTone {
+            if (stopped || gen != generation) return@playTone
+            if (System.currentTimeMillis() >= deadline) { finishRinging(true); return@playTone }
+
+            Speaker.speak(this, currentSpeech, times = 1) {
+                handler.post {
+                    if (stopped || gen != generation) return@post
+                    if (System.currentTimeMillis() >= deadline) finishRinging(true)
+                    else handler.postDelayed({ cycle(gen) }, 1500)
+                }
+            }
+        }
+    }
+
+    /** アラーム音を1回鳴らす。長い着信音は6秒で切り上げる */
+    private fun playTone(onDone: () -> Unit) {
+        var fired = false
+        val once = {
+            if (!fired) { fired = true; onDone() }
+        }
+
+        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        if (uri == null) { once(); return }
+
+        runCatching {
+            player?.release()
+            player = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                setDataSource(this@AlarmService, uri)
+                isLooping = false
+                setOnCompletionListener { once() }
+                setOnErrorListener { _, _, _ -> once(); true }
+                prepare()
+                start()
+            }
+            handler.postDelayed({
+                runCatching { if (player?.isPlaying == true) player?.stop() }
+                once()
+            }, 6000)
+        }.onFailure { once() }
+    }
+
+    private fun startVibration() {
+        runCatching {
+            val v = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                getSystemService(VibratorManager::class.java).defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Vibrator::class.java)
+            }
+            // 短く2回 → 少し休む、をくり返す（強すぎない控えめなパターン）
+            val pattern = longArrayOf(0, 400, 250, 400, 2200)
+            v.vibrate(
+                VibrationEffect.createWaveform(pattern, 0),
+                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build()
+            )
+            vibrator = v
+        }
+    }
+
+    /* ---------------- 全画面表示 ---------------- */
+
+    private fun fullScreenIntent(taskId: Long, title: String): Intent =
+        Intent(this, AlarmActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            putExtra(EXTRA_TASK_ID, taskId)
+            putExtra(EXTRA_TITLE, title)
+        }
+
+    private fun openFullScreenIfPossible(taskId: Long, title: String) {
+        val allowed = runCatching { Settings.canDrawOverlays(this) }.getOrDefault(false)
+        if (!allowed) return
+        runCatching { startActivity(fullScreenIntent(taskId, title)) }
+    }
+
+    /* ---------------- 後始末 ---------------- */
+
+    private fun stopSound() {
+        runCatching { player?.stop() }
+        runCatching { player?.release() }
+        player = null
+        runCatching { vibrator?.cancel() }
+        vibrator = null
+        Speaker.stop()
+    }
+
+    private fun finishRinging(keepReminder: Boolean) {
+        if (stopped) return
+        stopped = true
+        generation++
+        handler.removeCallbacksAndMessages(null)
+        stopSound()
+        runCatching { wakeLock?.release() }
+        wakeLock = null
+        ringingTaskId = Long.MIN_VALUE
+
+        val taskId = currentTask?.id
+        if (keepReminder && taskId != null && !Repo.isDone(taskId, java.time.LocalDate.now())) {
+            postReminder(this, taskId, currentTitle)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
+        else @Suppress("DEPRECATION") stopForeground(true)
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+        stopped = true
+        handler.removeCallbacksAndMessages(null)
+        stopSound()
+        runCatching { wakeLock?.release() }
+        ringingTaskId = Long.MIN_VALUE
+        super.onDestroy()
     }
 
     private fun startForegroundSafely(n: Notification) {
@@ -91,8 +235,7 @@ class AlarmService : Service() {
                 startForeground(FGS_NOTIF_ID, n)
             }
         } catch (e: Exception) {
-            // 前面サービスにできなくても、通知だけは出しておく
-            getSystemService(NotificationManager::class.java).notify(FGS_NOTIF_ID, n)
+            runCatching { getSystemService(NotificationManager::class.java).notify(FGS_NOTIF_ID, n) }
         }
     }
 
@@ -101,92 +244,14 @@ class AlarmService : Service() {
             val pm = getSystemService(PowerManager::class.java)
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "mimamori:alarm").apply {
                 setReferenceCounted(false)
-                acquire(3 * 60 * 1000L)
+                acquire(5 * 60 * 1000L)
             }
         }
     }
-
-    private fun startSound() {
-        val seconds = Repo.soundSeconds
-        if (seconds <= 0) { speakNow(); return }
-        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        if (uri == null) { speakNow(); return }
-        runCatching {
-            player = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                setDataSource(this@AlarmService, uri)
-                isLooping = false
-                setOnCompletionListener { speakNow() }
-                setOnErrorListener { _, _, _ -> speakNow(); true }
-                prepare()
-                start()
-            }
-            // 音が長すぎる着信音でも、8秒で切り上げて読み上げに移る
-            handler.postDelayed({
-                if (player?.isPlaying == true) { runCatching { player?.stop() }; speakNow() }
-            }, 8000)
-        }.onFailure { speakNow() }
-    }
-
-    private var spoken = false
-    private fun speakNow() {
-        if (spoken) return
-        spoken = true
-        Speaker.speak(this, currentSpeech, times = 2) {
-            handler.post { finishRinging(keepReminder = true) }
-        }
-    }
-
-    /** 鳴り終わり。完了していなければ「まだです」通知を残す */
-    private fun finishRinging(keepReminder: Boolean) {
-        timeout?.let { handler.removeCallbacks(it) }
-        Speaker.stop()
-        runCatching { player?.stop() }
-        runCatching { player?.release() }
-        player = null
-        runCatching { wakeLock?.release() }
-        wakeLock = null
-        ringingTaskId = Long.MIN_VALUE
-
-        val taskId = currentTask?.id
-        if (keepReminder && taskId != null && !Repo.isDone(taskId, java.time.LocalDate.now())) {
-            postReminder(this, taskId, currentTitle)
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
-        stopSelf()
-    }
-
-    override fun onDestroy() {
-        timeout?.let { handler.removeCallbacks(it) }
-        Speaker.stop()
-        runCatching { player?.release() }
-        runCatching { wakeLock?.release() }
-        ringingTaskId = Long.MIN_VALUE
-        super.onDestroy()
-    }
-
-    // ---------------- 通知の組み立て ----------------
 
     private fun buildRingingNotification(taskId: Long, title: String): Notification {
-        val full = Intent(this, AlarmActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            putExtra(EXTRA_TASK_ID, taskId)
-            putExtra(EXTRA_TITLE, title)
-        }
         val fullPi = PendingIntent.getActivity(
-            this, taskId.toInt(), full,
+            this, taskId.toInt(), fullScreenIntent(taskId, title),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, App.CH_ALARM)

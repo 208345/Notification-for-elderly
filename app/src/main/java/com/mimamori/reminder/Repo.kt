@@ -117,10 +117,10 @@ object Repo {
         get() = prefs.getString(K_PERSON, "") ?: ""
         set(v) { prefs.edit().putString(K_PERSON, v.trim()).apply() }
 
-    /** アラームを鳴らし続ける秒数（0で音なし、既定60秒） */
+    /** 「完了」が押されないとき、最大で何秒まで鳴らし続けるか（既定60秒） */
     var soundSeconds: Int
         get() = prefs.getInt(K_SOUND_SEC, 60)
-        set(v) { prefs.edit().putInt(K_SOUND_SEC, v.coerceIn(0, 300)).apply() }
+        set(v) { prefs.edit().putInt(K_SOUND_SEC, v.coerceIn(10, 300)).apply() }
 
     // ---------------- 送信待ちキュー ----------------
 

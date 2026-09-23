@@ -16,19 +16,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -40,16 +44,20 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimeInput
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -91,7 +99,6 @@ private fun AppRoot() {
     var tab by remember { mutableIntStateOf(0) }
     val ctx = LocalContext.current
 
-    // Android 13以降は通知の許可を最初に聞く
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -115,38 +122,53 @@ private fun AppRoot() {
     }
 }
 
+/** 画面下のタブ。■◎▲（ナビゲーションバー）に重ならないよう余白を自動で確保する */
 @Composable
 private fun BottomTabs(selected: Int, onSelect: (Int) -> Unit) {
     val labels = listOf("今日", "よてい", "設定")
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(Color.White)
-            .border(1.dp, Line)
-    ) {
-        labels.forEachIndexed { i, label ->
-            val on = i == selected
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(68.dp)
-                    .background(if (on) Green else Color.White)
-                    .clickable { onSelect(i) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    label,
-                    fontSize = 21.sp,
-                    fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                    color = if (on) Color.White else Muted,
-                )
+    Column(Modifier.fillMaxWidth().background(Color.White)) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
+        ) {
+            labels.forEachIndexed { i, label ->
+                val on = i == selected
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(66.dp)
+                        .background(if (on) Green else Color.White)
+                        .clickable { onSelect(i) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        label,
+                        fontSize = 21.sp,
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                        color = if (on) Color.White else Muted,
+                    )
+                }
             }
         }
     }
 }
 
+/** 画面上の見出し。時刻表示やカメラ穴に重ならないよう余白を自動で確保する */
+@Composable
+private fun Header(content: @Composable () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Green)
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(20.dp, 16.dp)
+    ) { content() }
+}
+
 /* ============================================================
- *  今日の画面（本人がいちばん見る画面）
+ *  今日の画面
  * ========================================================== */
 
 @Composable
@@ -159,12 +181,7 @@ private fun TodayScreen() {
     val doneCount = list.count { done.containsKey(Repo.doneKey(it.id, today)) }
 
     Column(Modifier.fillMaxSize()) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(Green)
-                .padding(20.dp, 18.dp)
-        ) {
+        Header {
             Text(
                 "${today.monthValue}月${today.dayOfMonth}日（${Days.labels[today.dayOfWeek.value % 7]}）",
                 fontSize = 30.sp, fontWeight = FontWeight.Black, color = Color.White,
@@ -184,15 +201,12 @@ private fun TodayScreen() {
                 )
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp)) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(14.dp)) {
                 items(list, key = { it.id }) { task ->
                     val isDone = done.containsKey(Repo.doneKey(task.id, today))
                     TodayRow(task, isDone) {
-                        if (isDone) {
-                            Repo.setDone(task.id, today, false)
-                        } else {
-                            Actions.markDone(ctx, task.id, true, today)
-                        }
+                        if (isDone) Repo.setDone(task.id, today, false)
+                        else Actions.markDone(ctx, task.id, true, today)
                     }
                     Spacer(Modifier.height(12.dp))
                 }
@@ -210,9 +224,7 @@ private fun TodayRow(task: TaskItem, isDone: Boolean, onToggle: () -> Unit) {
         elevation = CardDefaults.cardElevation(defaultElevation = if (isDone) 0.dp else 2.dp),
     ) {
         Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(16.dp, 14.dp),
+            Modifier.fillMaxWidth().padding(16.dp, 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
@@ -233,25 +245,21 @@ private fun TodayRow(task: TaskItem, isDone: Boolean, onToggle: () -> Unit) {
                     onClick = onToggle,
                     modifier = Modifier.height(72.dp).width(110.dp),
                     shape = RoundedCornerShape(16.dp),
-                ) {
-                    Text("済", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Green)
-                }
+                ) { Text("済", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Green) }
             } else {
                 Button(
                     onClick = onToggle,
                     modifier = Modifier.height(72.dp).width(110.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Green),
-                ) {
-                    Text("完了", fontSize = 26.sp, fontWeight = FontWeight.Black)
-                }
+                ) { Text("完了", fontSize = 26.sp, fontWeight = FontWeight.Black) }
             }
         }
     }
 }
 
 /* ============================================================
- *  よてい（タスクの追加・編集）
+ *  よてい
  * ========================================================== */
 
 @Composable
@@ -262,22 +270,18 @@ private fun TasksScreen() {
     var showEditor by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(Green)
-                .padding(20.dp, 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("よてい", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color.White, modifier = Modifier.weight(1f))
-            Button(
-                onClick = {
-                    editing = TaskItem(id = Repo.newId(), title = "", hour = 8, minute = 0)
-                    showEditor = true
-                },
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = GreenDark),
-            ) { Text("＋ 追加", fontSize = 19.sp, fontWeight = FontWeight.Bold) }
+        Header {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("よてい", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color.White, modifier = Modifier.weight(1f))
+                Button(
+                    onClick = {
+                        editing = TaskItem(id = Repo.newId(), title = "", hour = 8, minute = 0)
+                        showEditor = true
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = GreenDark),
+                ) { Text("＋ 追加", fontSize = 19.sp, fontWeight = FontWeight.Bold) }
+            }
         }
 
         if (tasks.isEmpty()) {
@@ -285,19 +289,15 @@ private fun TasksScreen() {
                 Text("「＋ 追加」から\n予定をつくってください", fontSize = 22.sp, color = Muted, textAlign = TextAlign.Center, lineHeight = 34.sp)
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp)) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(14.dp)) {
                 items(tasks, key = { it.id }) { t ->
                     Card(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { editing = t; showEditor = true },
+                        Modifier.fillMaxWidth().clickable { editing = t; showEditor = true },
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = Color.White),
                     ) {
                         Row(Modifier.padding(16.dp, 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                TaskSummary(t)
-                            }
+                            Column(Modifier.weight(1f)) { TaskSummary(t) }
                             Switch(
                                 checked = t.enabled,
                                 onCheckedChange = { on ->
@@ -364,29 +364,26 @@ private fun TaskEditor(
     var minute by remember(initial.id) { mutableIntStateOf(initial.minute) }
     var days by remember(initial.id) { mutableIntStateOf(initial.days) }
     var speech by remember(initial.id) { mutableStateOf(initial.speech) }
+    var pickTime by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onCancel,
         confirmButton = {
-            TextButton(
-                onClick = {
-                    onSave(
-                        initial.copy(
-                            title = title.trim().ifBlank { "予定" },
-                            hour = hour,
-                            minute = minute,
-                            days = if (days == 0) Days.EVERY else days,
-                            speech = speech.trim(),
-                        )
+            TextButton(onClick = {
+                onSave(
+                    initial.copy(
+                        title = title.trim().ifBlank { "予定" },
+                        hour = hour,
+                        minute = minute,
+                        days = if (days == 0) Days.EVERY else days,
+                        speech = speech.trim(),
                     )
-                }
-            ) { Text("保存", fontSize = 22.sp, fontWeight = FontWeight.Bold) }
+                )
+            }) { Text("保存", fontSize = 22.sp, fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
             Row {
-                if (!isNew) {
-                    TextButton(onClick = onDelete) { Text("削除", fontSize = 20.sp, color = Red) }
-                }
+                if (!isNew) TextButton(onClick = onDelete) { Text("削除", fontSize = 20.sp, color = Red) }
                 TextButton(onClick = onCancel) { Text("やめる", fontSize = 20.sp) }
             }
         },
@@ -400,15 +397,29 @@ private fun TaskEditor(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(16.dp))
+
+                Spacer(Modifier.height(18.dp))
                 Text("じかん", fontSize = 17.sp, color = Muted, fontWeight = FontWeight.Bold)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Stepper(value = hour, suffix = "時", onChange = { hour = (it + 24) % 24 })
-                    Spacer(Modifier.width(10.dp))
-                    Stepper(value = minute, suffix = "分", step = 5, onChange = { minute = (it + 60) % 60 })
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFE8F1E9), RoundedCornerShape(16.dp))
+                        .clickable { pickTime = true }
+                        .padding(18.dp, 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        String.format("%d:%02d", hour, minute),
+                        fontSize = 44.sp, fontWeight = FontWeight.Black, color = GreenDark,
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Text("タップして\n時計で えらぶ", fontSize = 14.sp, color = Muted, lineHeight = 19.sp)
                 }
-                Spacer(Modifier.height(16.dp))
+
+                Spacer(Modifier.height(18.dp))
                 Text("ようび", fontSize = 17.sp, color = Muted, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     (0..6).forEach { i ->
                         val on = days and (1 shl i) != 0
@@ -423,6 +434,7 @@ private fun TaskEditor(
                         }
                     }
                 }
+
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = speech,
@@ -433,36 +445,58 @@ private fun TaskEditor(
             }
         },
     )
-}
 
-@Composable
-private fun Stepper(value: Int, suffix: String, step: Int = 1, onChange: (Int) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        RoundBtn("−") { onChange(value - step) }
-        Box(Modifier.width(78.dp), contentAlignment = Alignment.Center) {
-            Text(
-                if (suffix == "分") String.format("%02d", value) else value.toString(),
-                fontSize = 34.sp, fontWeight = FontWeight.Black, color = Ink,
-            )
-        }
-        RoundBtn("＋") { onChange(value + step) }
-        Text(suffix, fontSize = 19.sp, color = Muted, modifier = Modifier.padding(start = 4.dp))
+    if (pickTime) {
+        ClockTimeDialog(
+            initialHour = hour,
+            initialMinute = minute,
+            onConfirm = { h, m -> hour = h; minute = m; pickTime = false },
+            onCancel = { pickTime = false },
+        )
     }
 }
 
+/** Android標準と同じ「時計の文字盤」で時刻を選ぶダイアログ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RoundBtn(label: String, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(46.dp)
-            .background(Color(0xFFE8F1E9), CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) { Text(label, fontSize = 26.sp, fontWeight = FontWeight.Black, color = GreenDark) }
+private fun ClockTimeDialog(
+    initialHour: Int,
+    initialMinute: Int,
+    onConfirm: (Int, Int) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val state = rememberTimePickerState(initialHour = initialHour, initialMinute = initialMinute, is24Hour = true)
+    var keyboard by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onCancel,
+        confirmButton = {
+            TextButton(onClick = { onConfirm(state.hour, state.minute) }) {
+                Text("決定", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { keyboard = !keyboard }) {
+                    Text(if (keyboard) "時計で選ぶ" else "数字で入力", fontSize = 17.sp)
+                }
+                TextButton(onClick = onCancel) { Text("やめる", fontSize = 20.sp) }
+            }
+        },
+        title = { Text("じかんを えらぶ", fontSize = 22.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (keyboard) TimeInput(state = state) else TimePicker(state = state)
+            }
+        },
+    )
 }
 
 /* ============================================================
- *  設定（ご家族向け）
+ *  設定
  * ========================================================== */
 
 @Composable
@@ -474,25 +508,18 @@ private fun SettingsScreen() {
     var testMsg by remember { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-    ) {
-        Text(
-            "設定",
-            fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color.White,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Green)
-                .padding(20.dp, 16.dp),
-        )
+    Column(Modifier.fillMaxSize()) {
+        Header { Text("設定", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color.White) }
 
-        Column(Modifier.padding(18.dp)) {
-
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(18.dp)
+        ) {
             SectionTitle("① 端末の設定（いちばん大事）")
             Text(
-                "ここが全部「OK」になっていないと、アプリを閉じているときに鳴りません。",
+                "ここが全部「✅」になっていないと、アプリを閉じているときに鳴りません。",
                 fontSize = 15.sp, color = Muted, lineHeight = 22.sp,
             )
             Spacer(Modifier.height(10.dp))
@@ -504,10 +531,12 @@ private fun SettingsScreen() {
                         ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
                     else true,
                 ) {
-                    ctx.startActivity(
-                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
-                    )
+                    runCatching {
+                        ctx.startActivity(
+                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                        )
+                    }
                     refresh++
                 }
 
@@ -531,13 +560,19 @@ private fun SettingsScreen() {
                     refresh++
                 }
 
+                PermRow("他のアプリの上に重ねて表示", ok = canOverlay(ctx)) {
+                    runCatching {
+                        ctx.startActivity(
+                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${ctx.packageName}"))
+                        )
+                    }
+                    refresh++
+                }
+
                 PermRow("電池の節約から外す", ok = ignoringBattery(ctx)) {
                     runCatching {
                         ctx.startActivity(
-                            Intent(
-                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                                Uri.parse("package:${ctx.packageName}")
-                            )
+                            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}"))
                         )
                     }.onFailure {
                         runCatching { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
@@ -551,6 +586,11 @@ private fun SettingsScreen() {
                 }
             }
 
+            Text(
+                "「他のアプリの上に重ねて表示」は、スマホを操作している最中でも画面いっぱいに出すために使います。",
+                fontSize = 13.sp, color = Muted, lineHeight = 19.sp,
+            )
+
             Spacer(Modifier.height(10.dp))
             OutlinedButton(
                 onClick = { refresh++ },
@@ -559,7 +599,7 @@ private fun SettingsScreen() {
 
             Spacer(Modifier.height(26.dp))
             SectionTitle("② 動作テスト")
-            Text("10秒後に、本番と同じようにアラームを鳴らします。画面を消してから待ってみてください。", fontSize = 15.sp, color = Muted, lineHeight = 22.sp)
+            Text("10秒後に、本番と同じようにお知らせを出します。画面を消してから待ってみてください。", fontSize = 15.sp, color = Muted, lineHeight = 22.sp)
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
@@ -571,13 +611,17 @@ private fun SettingsScreen() {
             ) { Text("10秒後にテストする", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
 
             Spacer(Modifier.height(26.dp))
-            SectionTitle("③ 鳴らす長さ")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Stepper(value = soundSec, suffix = "秒", step = 10) {
-                    soundSec = it.coerceIn(0, 180); Repo.soundSeconds = soundSec
-                }
+            SectionTitle("③ 鳴らし続ける長さ")
+            Text(
+                "「完了」を押すまで鳴り続けます。押されなかった場合も、この時間で自動的に止まります。",
+                fontSize = 15.sp, color = Muted, lineHeight = 22.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            Stepper(value = soundSec, suffix = "秒", step = 30) {
+                soundSec = it.coerceIn(30, 300)
+                Repo.soundSeconds = soundSec
             }
-            Text("読み上げが終わればこれより早く止まります。0にすると音は鳴らさず読み上げだけになります。", fontSize = 14.sp, color = Muted, lineHeight = 20.sp)
+            Text("止まったあとも「まだ完了していません」の通知は残ります。", fontSize = 13.sp, color = Muted, lineHeight = 19.sp)
 
             Spacer(Modifier.height(26.dp))
             SectionTitle("④ ご家族への共有（スプレッドシート）")
@@ -617,7 +661,7 @@ private fun SettingsScreen() {
             Spacer(Modifier.height(6.dp))
             Text("未送信: ${Repo.queueSize()} 件", fontSize = 14.sp, color = Muted)
 
-            Spacer(Modifier.height(40.dp))
+            Spacer(Modifier.height(36.dp))
             Text(
                 "このアプリは飲み忘れを減らすための補助です。命にかかわるお薬の管理を、これだけに頼らないようにしてください。",
                 fontSize = 14.sp, color = Amber, lineHeight = 21.sp,
@@ -636,20 +680,39 @@ private fun SectionTitle(text: String) {
 @Composable
 private fun PermRow(label: String, ok: Boolean, onFix: () -> Unit) {
     Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 5.dp),
+        Modifier.fillMaxWidth().padding(vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(if (ok) "✅" else "⚠️", fontSize = 22.sp)
         Spacer(Modifier.width(10.dp))
         Text(label, fontSize = 18.sp, color = Ink, modifier = Modifier.weight(1f))
         if (!ok) {
-            Button(onClick = onFix, shape = RoundedCornerShape(10.dp)) {
-                Text("設定する", fontSize = 15.sp)
-            }
+            Button(onClick = onFix, shape = RoundedCornerShape(10.dp)) { Text("設定する", fontSize = 15.sp) }
         }
     }
+}
+
+@Composable
+private fun Stepper(value: Int, suffix: String, step: Int = 1, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        RoundBtn("−") { onChange(value - step) }
+        Box(Modifier.width(88.dp), contentAlignment = Alignment.Center) {
+            Text(value.toString(), fontSize = 34.sp, fontWeight = FontWeight.Black, color = Ink)
+        }
+        RoundBtn("＋") { onChange(value + step) }
+        Text(suffix, fontSize = 19.sp, color = Muted, modifier = Modifier.padding(start = 4.dp))
+    }
+}
+
+@Composable
+private fun RoundBtn(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(52.dp)
+            .background(Color(0xFFE8F1E9), CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Text(label, fontSize = 28.sp, fontWeight = FontWeight.Black, color = GreenDark) }
 }
 
 /* ---------------- 権限の確認 ---------------- */
@@ -660,6 +723,9 @@ private fun canFullScreen(ctx: Context): Boolean {
         ctx.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
     }.getOrDefault(true)
 }
+
+private fun canOverlay(ctx: Context): Boolean =
+    runCatching { Settings.canDrawOverlays(ctx) }.getOrDefault(false)
 
 private fun ignoringBattery(ctx: Context): Boolean = runCatching {
     ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName)

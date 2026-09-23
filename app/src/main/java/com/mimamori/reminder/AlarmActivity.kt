@@ -11,15 +11,20 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -98,13 +103,10 @@ class AlarmActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
-    override fun onDestroy() {
-        Actions.stopRinging(this)
-        super.onDestroy()
-    }
+    // ホームボタンなどで閉じられても音は止めない（「完了」か「あとで」を押すまで鳴らす）
 }
 
-@androidx.compose.runtime.Composable
+@Composable
 private fun AlarmScreen(
     title: String,
     timeText: String,
@@ -121,8 +123,9 @@ private fun AlarmScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFFFFFDF5))
-            .padding(24.dp)
+            .background(Paper)
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .padding(24.dp, 16.dp)
     ) {
         Column(
             Modifier.fillMaxSize(),
@@ -130,14 +133,9 @@ private fun AlarmScreen(
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                androidx.compose.foundation.layout.Spacer(Modifier.height(24.dp))
-                Text(dateText, fontSize = 22.sp, color = Color(0xFF5B6770))
-                Text(
-                    timeText,
-                    fontSize = 76.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF1B5E20),
-                )
+                Spacer(Modifier.height(12.dp))
+                Text(dateText, fontSize = 22.sp, color = Muted)
+                Text(timeText, fontSize = 76.sp, fontWeight = FontWeight.Black, color = GreenDark)
             }
 
             Text(
@@ -146,27 +144,22 @@ private fun AlarmScreen(
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
                 lineHeight = 56.sp,
-                color = Color(0xFF15202B),
+                color = Ink,
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
 
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Button(
                     onClick = { if (!pressed) { pressed = true; onDone() } },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(140.dp),
+                    modifier = Modifier.fillMaxWidth().height(140.dp),
                     shape = RoundedCornerShape(24.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2E7D32),
-                        contentColor = Color.White,
-                    ),
+                    colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.White),
                 ) {
                     Text(if (isTest) "テスト完了" else "完了", fontSize = 48.sp, fontWeight = FontWeight.Black)
                 }
-                androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
-                TextButton(onClick = onLater, modifier = Modifier.height(56.dp)) {
-                    Text("あとで（音だけ止める）", fontSize = 20.sp, color = Color(0xFF5B6770))
+                Spacer(Modifier.height(10.dp))
+                TextButton(onClick = onLater, modifier = Modifier.height(54.dp)) {
+                    Text("あとで（音だけ止める）", fontSize = 20.sp, color = Muted)
                 }
             }
         }
