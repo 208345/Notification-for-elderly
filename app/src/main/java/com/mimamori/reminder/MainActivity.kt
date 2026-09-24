@@ -507,6 +507,15 @@ private fun SettingsScreen() {
     var soundSec by remember { mutableIntStateOf(Repo.soundSeconds) }
     var testMsg by remember { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
+    var ttsMsg by remember { mutableStateOf("") }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    // 読み上げエンジンの準備には少し時間がかかるので、少し待ってから状態を見直す
+    LaunchedEffect(Unit) {
+        Speaker.init(ctx)
+        kotlinx.coroutines.delay(1800)
+        refresh++
+    }
 
     Column(Modifier.fillMaxSize()) {
         Header { Text("設定", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color.White) }
@@ -582,6 +591,11 @@ private fun SettingsScreen() {
 
                 PermRow("日本語の音声が使える", ok = Speaker.isJapaneseAvailable) {
                     runCatching { ctx.startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
+                        .onFailure {
+                            runCatching {
+                                ctx.startActivity(Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA))
+                            }
+                        }
                     refresh++
                 }
             }
@@ -609,6 +623,29 @@ private fun SettingsScreen() {
                 modifier = Modifier.fillMaxWidth().height(60.dp),
                 shape = RoundedCornerShape(14.dp),
             ) { Text("10秒後にテストする", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = {
+                    ttsMsg = "準備しています…"
+                    Speaker.speak(ctx, "読み上げのテストです。この声が聞こえていれば大丈夫です。", times = 1) {
+                        ttsMsg = Speaker.statusText()
+                        refresh++
+                    }
+                    mainHandler.postDelayed({
+                        if (ttsMsg == "準備しています…") ttsMsg = Speaker.statusText()
+                    }, 3000)
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) { Text("読み上げだけ試す", fontSize = 17.sp) }
+            Text(
+                "声が出ないときは、下に出る文を教えてください。原因がわかります。",
+                fontSize = 13.sp, color = Muted, lineHeight = 19.sp,
+            )
+            if (ttsMsg.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text("読み上げ：$ttsMsg", fontSize = 15.sp, color = Ink, lineHeight = 22.sp, fontWeight = FontWeight.Bold)
+            }
 
             Spacer(Modifier.height(26.dp))
             SectionTitle("③ 鳴らし続ける長さ")

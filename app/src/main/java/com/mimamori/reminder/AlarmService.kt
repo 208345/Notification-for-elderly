@@ -87,6 +87,9 @@ class AlarmService : Service() {
         startForegroundSafely(notif)
         acquireWakeLock()
 
+        // 読み上げエンジンの起動には1〜2秒かかるので、音を鳴らしている間に準備しておく
+        Speaker.init(this)
+
         // スマホを使用中でも確実に全画面で出すため、重ねて表示の権限があれば直接ひらく
         openFullScreenIfPossible(taskId, currentTitle)
 
@@ -120,7 +123,7 @@ class AlarmService : Service() {
         }
     }
 
-    /** アラーム音を1回鳴らす。長い着信音は6秒で切り上げる */
+    /** アラーム音を1回鳴らす。長いアラーム音は2.5秒で切り上げて、すぐ読み上げに移る */
     private fun playTone(onDone: () -> Unit) {
         var fired = false
         val once = {
@@ -150,7 +153,7 @@ class AlarmService : Service() {
             handler.postDelayed({
                 runCatching { if (player?.isPlaying == true) player?.stop() }
                 once()
-            }, 6000)
+            }, 2500)
         }.onFailure { once() }
     }
 
